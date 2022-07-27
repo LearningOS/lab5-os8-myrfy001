@@ -8,7 +8,9 @@ use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
+use alloc::collections::BTreeMap;
 use core::cell::RefMut;
+use crate::config::DEADLOCK_DETECT_RESOURCE_KIND_CNT;
 
 pub struct ProcessControlBlock {
     // immutable
@@ -31,6 +33,7 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
     pub deadlock_detect_enabled: bool,
+    pub deadlock_detect_work: BTreeMap<(u32, u32), u32>,
 }
 
 impl ProcessControlBlockInner {
@@ -63,6 +66,85 @@ impl ProcessControlBlockInner {
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
     }
+
+    // return true id will deadlock
+    pub fn detect_will_deadlock(&mut self) -> bool {
+        // first, clone `work table`, because we will modify it later.
+        let mut work = self.deadlock_detect_work.clone();
+
+        // second, build `finish table`
+        let mut finish:Vec<bool> = self.tasks.iter().map(|t| !t.is_some()).collect();
+
+        
+        self.tasks.iter()
+        .filter(|t|t.is_some())
+        .for_each(|t| {
+            let t = t.as_ref().unwrap();
+            let mut inner = t.inner_exclusive_access();
+            let tid = if let Some(t) = inner.res.as_ref(){
+                t.tid
+            } else {
+                println!("None 1======");
+                9999
+            };
+            let d = &mut inner.deadlock_detect;
+            d.deadlock_detect_allocation.iter().for_each(|(key, val)|{
+                println!("tid = {}, dead alloc {:?} = {}", tid, key, val);
+                *work.get_mut(key).unwrap() -= val;
+            });
+        });
+
+        println!("work {:?}", work);
+        
+
+        loop {
+            let mut modified = false;
+
+            for (i, v) in finish.iter_mut().enumerate() {
+                if *v==false {
+                    let t = self.tasks[i].as_ref().unwrap();
+                    let mut inner = t.inner_exclusive_access();
+                    
+                    let tid = if let Some(t) = inner.res.as_ref(){
+                        t.tid
+                    } else {
+                        println!("None 2 ======");
+                        9999
+                    };
+
+                    let d = &mut inner.deadlock_detect;
+    
+                    if let Some((kind, id, val)) = d.deadlock_detect_block_because_need {
+                        let p = work.get_mut(&(kind, id)).unwrap();
+                        if *p >= val {
+                            *v = true;
+                            modified = true;
+
+                            println!("tid={} will release: {:?}", tid, d.deadlock_detect_allocation);
+                            for (key, val) in d.deadlock_detect_allocation.iter() {
+                                *work.get_mut(key).unwrap() += val;
+                            }
+                        } 
+                    } else {
+                        *v = true;
+                        modified = true;
+                        println!("tid={} will release: {:?}", tid, d.deadlock_detect_allocation);
+                        for (key, val) in d.deadlock_detect_allocation.iter() {
+                            *work.get_mut(key).unwrap() += val;
+                        }
+                    }
+                }
+            }
+            
+
+            if modified == false {
+                break;
+            }
+            
+        }
+        finish.iter().any(|t|*t==false)
+    }
+
 }
 
 impl ProcessControlBlock {
@@ -98,6 +180,8 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    deadlock_detect_work: BTreeMap::new(),
                 })
             },
         });
@@ -219,6 +303,8 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: parent.deadlock_detect_enabled,
+                    deadlock_detect_work: BTreeMap::new(),
                 })
             },
         });
@@ -273,9 +359,13 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect_enabled: false,
+                    deadlock_detect_work: BTreeMap::new(),
                 })
             },
         });
         process
     }
 }
+
+

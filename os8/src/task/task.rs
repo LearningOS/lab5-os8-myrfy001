@@ -1,11 +1,12 @@
 //! Types related to task management & Functions for completely changing TCB
 
-use super::id::TaskUserRes;
+use super::id::{TaskUserRes, DeadlockDetectInfo};
 use super::{kstack_alloc, KernelStack, ProcessControlBlock, TaskContext};
 use crate::trap::TrapContext;
 use crate::{mm::PhysPageNum, sync::UPSafeCell};
 use alloc::sync::{Arc, Weak};
 use core::cell::RefMut;
+use alloc::collections::BTreeMap;
 
 /// Task control block structure
 ///
@@ -34,6 +35,8 @@ pub struct TaskControlBlockInner {
     pub exit_code: Option<i32>,
     /// Tid and ustack will be deallocated when this goes None
     pub res: Option<TaskUserRes>,
+
+    pub deadlock_detect: DeadlockDetectInfo,
 }
 
 /// Simple access to its internal fields
@@ -73,6 +76,10 @@ impl TaskControlBlock {
                     task_cx: TaskContext::goto_trap_return(kstack_top),
                     task_status: TaskStatus::Ready,
                     exit_code: None,
+                    deadlock_detect: DeadlockDetectInfo { 
+                        deadlock_detect_allocation: BTreeMap::new(),
+                        deadlock_detect_block_because_need: None,
+                    }
                 })
             },
         }
@@ -124,6 +131,10 @@ impl TaskControlBlock {
                     task_cx: context,
                     task_status: TaskStatus::Ready,
                     exit_code: None,
+                    deadlock_detect: DeadlockDetectInfo { 
+                        deadlock_detect_allocation: BTreeMap::new(),
+                        deadlock_detect_block_because_need: None,
+                    },
                 })
             },
         }

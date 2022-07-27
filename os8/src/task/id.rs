@@ -1,7 +1,8 @@
 use super::ProcessControlBlock;
-use crate::config::{KERNEL_STACK_SIZE, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
+use crate::config::{KERNEL_STACK_SIZE, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE, DEADLOCK_DETECT_RESOURCE_KIND_CNT};
 use crate::mm::{MapPermission, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
+use alloc::collections::BTreeMap;
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
@@ -108,6 +109,11 @@ impl KernelStack {
         let (_, kernel_stack_top) = kernel_stack_position(self.0);
         kernel_stack_top
     }
+}
+
+pub struct DeadlockDetectInfo {
+    pub deadlock_detect_allocation: BTreeMap<(u32,u32), u32>,
+    pub deadlock_detect_block_because_need: Option<(u32, u32, u32)>, // 被阻塞的原因，是因为需要（资源类型、资源ID、资源数量）
 }
 
 pub struct TaskUserRes {
